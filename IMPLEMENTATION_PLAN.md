@@ -34,26 +34,51 @@ The Leasehold-buddy repo currently has 3 docs commits on main. This plan builds 
 - Added Task 11.3 for integration/E2E tests only
 - Contradiction detection is manual trigger (director action) for MVP
 - Added error handling notes to AI pipeline tasks
-- Updated estimates to ~88h
+- Updated estimates to ~88h sequential, ~50h wall-clock with 2 parallel streams
+
+**Parallel execution (v3):**
+- Stream A (Dashboard): Auth → Onboarding → Dashboard pages → Privacy (~26h)
+- Stream B (Backend): WhatsApp → Registration → Docs → RAG → Cases → Drafts → Bot → Production (~42h)
+- Streams A and B run in parallel after Phase 1 (shared foundation)
+- Stream B owns Edge Functions, WhatsApp, AI pipeline
+- Stream A owns web pages, components, Stripe
+- Merge point: Phase 10 (Bot Intelligence) needs dashboard settings (group mode toggle from 9.5)
+- Wall-clock estimate: **~50h** with 2 subagents
 
 ---
 
-## Dependency Graph
+## Dependency Graph — 2 Parallel Streams
 
 ```
-Phase 0: Scaffold + WhatsApp Spike
-  └── Phase 1: Foundation (DB + RLS + Clients + UI)
-        ├── Phase 2: Auth + Onboarding
-        │     └── Phase 9: Dashboard (7 tasks)
-        ├── Phase 3: WhatsApp Core (3 tasks)
-        │     ├── Phase 4: Registration
-        │     └── Phase 5: Document Pipeline (6 tasks)
-        │           ├── Phase 6: RAG + Q&A (3 tasks)
-        │           └── Phase 7: Case Management (3 tasks)
-        │                 └── Phase 8: Drafts + Approval (2 tasks)
-        └── Phase 10: Bot Intelligence (3 tasks)
-              └── Phase 11: Production (3 tasks)
+              Phase 0: Scaffold + WA Spike (sequential, both streams need this)
+                              │
+              Phase 1: Foundation — DB + RLS + Clients + UI (sequential)
+                              │
+           ┌──────────────────┴──────────────────┐
+           │                                     │
+    STREAM A (Dashboard)               STREAM B (Backend + AI)
+           │                                     │
+    Phase 2: Auth + Onboarding          Phase 3: WhatsApp Core
+           │                                     │
+    Phase 9.1: Dashboard home           Phase 4: Registration
+    Phase 9.2a: Case detail pt1                  │
+    Phase 9.2b: Case detail pt2        Phase 5: Document Pipeline
+    Phase 9.3: Library                           │
+    Phase 9.4: Drafts workspace         Phase 6: RAG + Q&A
+    Phase 9.5: Settings                          │
+    Phase 9.6: Privacy page             Phase 7: Case Management
+    Phase 2.3: Stripe webhook                    │
+           │                            Phase 8: Drafts + Approval
+           │                                     │
+           └──────────────────┬──────────────────┘
+                              │
+                    Phase 10: Bot Intelligence
+                              │
+                    Phase 11: Production + Tests
 ```
+
+**Merge point:** Phase 10 needs both streams complete (group mode toggle from 9.5 + all bot flows from B).
+**Wall-clock:** Phase 0+1 (~9h seq) + max(Stream A ~26h, Stream B ~42h) + Phase 10+11 (~16h) = **~50h**
 
 ---
 
@@ -647,21 +672,33 @@ Unit tests are written alongside each task (Tasks 3.1, 3.2, 4.1, 5.5a, 8.2 each 
 
 ## Estimates
 
-| Phase | Tasks | ~Effort |
-|-------|-------|---------|
-| 0: Scaffold + Spike | 2 | 4h |
-| 1: Foundation | 4 | 5h |
-| 2: Auth + Onboarding | 3 | 5h |
-| 3: WhatsApp Core | 3 | 7h |
-| 4: Registration | 1 | 2h |
-| 5: Document Pipeline | 6 | 14h |
-| 6: RAG + Q&A | 3 | 6h |
-| 7: Case Management | 3 | 8h |
-| 8: Drafts + Approval | 2 | 5h |
-| 9: Dashboard | 7 | 16h |
-| 10: Bot Intelligence | 3 | 5h |
-| 11: Production | 3 | 11h |
-| **Total** | **40 tasks** | **~88h** |
+### Sequential (total work)
+
+| Phase | Tasks | ~Effort | Stream |
+|-------|-------|---------|--------|
+| 0: Scaffold + Spike | 2 | 4h | shared |
+| 1: Foundation | 4 | 5h | shared |
+| 2: Auth + Onboarding | 2 | 4h | A |
+| 2.3: Stripe webhook | 1 | 1h | A |
+| 9: Dashboard | 7 | 16h | A |
+| 3: WhatsApp Core | 3 | 7h | B |
+| 4: Registration | 1 | 2h | B |
+| 5: Document Pipeline | 6 | 14h | B |
+| 6: RAG + Q&A | 3 | 6h | B |
+| 7: Case Management | 3 | 8h | B |
+| 8: Drafts + Approval | 2 | 5h | B |
+| 10: Bot Intelligence | 3 | 5h | shared |
+| 11: Production | 3 | 11h | shared |
+| **Total** | **40 tasks** | **~88h** | |
+
+### Wall-clock with 2 parallel subagents
+
+| Segment | Duration | Notes |
+|---------|----------|-------|
+| Phase 0 + 1 (sequential) | ~9h | Both streams need foundation |
+| Stream A ‖ Stream B | ~42h | A finishes in ~21h, waits for B's ~42h |
+| Phase 10 + 11 (sequential) | ~16h | After both streams merge |
+| **Wall-clock total** | **~50h** | **43% faster than sequential** |
 
 ## Risks
 
