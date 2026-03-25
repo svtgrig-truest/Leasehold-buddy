@@ -20,12 +20,11 @@ Common Ground is an AI case manager for leasehold buildings. It lives in the bui
 | Database | Supabase (PostgreSQL) | Auth, RLS, storage, pgvector, cron |
 | Hosting | Vercel | Zero-config Next.js deploy |
 | Chat (WhatsApp) | Meta WhatsApp Cloud API | Free tier, no Twilio markup |
-| Chat (Facebook) | Facebook Messenger API | V2 — channel adapter placeholder |
-| AI | Claude Sonnet (Anthropic API) | All tasks: summarize, analyze, draft |
+| AI | Claude Haiku + Sonnet (Anthropic API) | Haiku for chat/classification, Sonnet for analysis/drafts |
 | Embeddings | OpenAI text-embedding-3-small | $0.02/1M tokens, strong English quality |
 | Vector search | Supabase pgvector | Native, no extra service |
 | File storage | Supabase Storage | PDFs, photos, per-building buckets |
-| Payments | Stripe | Per-building subscription |
+| Payments | Stripe Payment Link | Manual links for pilot; full integration V2 |
 | PDF parsing | pdf-parse (Node.js) | Text extraction from text-based PDFs |
 | Cron | Supabase pg_cron | Daily reminder checks |
 | Auth | Supabase Auth (magic link) | Director only, no password management |
@@ -44,13 +43,13 @@ Common Ground is an AI case manager for leasehold buildings. It lives in the bui
                │                        │
                ▼                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│              CHANNEL ADAPTER (Next.js API route)        │
+│              WHATSAPP WEBHOOK HANDLER (Next.js API route)│
 │                                                         │
 │  /api/webhook/whatsapp                                  │
 │  → identifies building by group_id or sender phone     │
 │  → routes to MessageProcessor                           │
 │                                                         │
-│  [FacebookAdapter — V2 placeholder]                     │
+│                                                         │
 └──────────────────────────┬──────────────────────────────┘
                            │
                            ▼
@@ -76,7 +75,7 @@ Common Ground is an AI case manager for leasehold buildings. It lives in the bui
 │    - Post summary to WhatsApp group                    │
 │                                                         │
 │  Message jobs:                                         │
-│    - @mention → Claude: answer in context (RAG)        │
+│    - @mention → Claude Haiku: answer in context (RAG)   │
 │    - Resident evidence → create evidence_item          │
 │    - Update case status if needed                      │
 │                                                         │
@@ -136,6 +135,7 @@ CREATE TABLE buildings (
   stripe_customer_id       text,
   stripe_subscription_id   text,
   subscription_status      text DEFAULT 'trialing',
+  group_mode               text DEFAULT 'open' CHECK (group_mode IN ('open', 'closed')),
   created_at               timestamptz DEFAULT now()
 );
 
@@ -383,6 +383,8 @@ Return 200 immediately
 Edge Function: process_event(chat_event_id)
 ```
 
+**24-hour window rule:** All proactive bot messages (reminders, status updates, evidence requests) go to the GROUP only. In 1:1, the bot only responds to incoming messages — never initiates. This avoids the WhatsApp 24-hour messaging window constraint.
+
 ### 5.3 Bot triggers
 
 In the group chat, the bot activates when:
@@ -403,24 +405,41 @@ Bot: "Thanks! You're registered as Flat 7.
 ```
 Saves `residents` row with `building_id`, `whatsapp_phone`, `flat_number`.
 
-### 5.5 Channel adapter interface
+### 5.5 Group mode: open vs closed
 
-```typescript
-interface Channel {
-  sendMessage(buildingId: string, recipientId: string, message: OutboundMessage): Promise<void>
-  sendGroupMessage(buildingId: string, text: string): Promise<void>
-  downloadMedia(mediaId: string): Promise<Buffer>
-}
+At onboarding, the director specifies whether the managing agent has access to the WhatsApp group.
 
-type OutboundMessage = {
-  text: string
-  replyToMessageId?: string
-}
+**Open mode** (no agent in group): Bot posts summaries, evidence requests, drafts, and status updates directly in the group.
 
-// Implementations:
-class WhatsAppChannel implements Channel { ... }
-class FacebookChannel implements Channel { ... }  // V2 placeholder
-```
+**Closed mode** (agent in group): Bot restricts what it posts to the group:
+- ✅ Neutral document summaries (no strategy)
+- ✅ General reminders ("case update available")
+- ❌ Evidence analysis, contradiction detection — goes to director 1:1 only
+- ❌ Draft responses — goes to director 1:1 only
+- ❌ Resident evidence prompts with strategic framing — goes to 1:1 only
+
+Director sets mode during onboarding. Can change later in dashboard settings.
+
+### 5.6 Approval via emoji reaction
+
+When the bot posts a draft in the group (open mode) or in 1:1 with director (closed mode), the director approves by placing a ✅ emoji reaction on the bot's message.
+
+Bot validation:
+1. Reaction is ✅ on a message with status = 'proposed' in draft_actions
+2. Reactor phone number matches the building's director phone number
+3. If valid → status changes to 'approved', bot posts copy-ready text
+4. If invalid reactor → bot ignores the reaction silently
+
+Rejection: Director replies to the draft message with feedback text. Bot detects reply-to-draft from director → marks as 'rejected', creates revision.
+
+### 5.7 Case routing in group chat
+
+When a message arrives in the group that isn't a document upload or @mention, but relates to an active case (e.g., "any update on the invoice?"), the bot needs to route it:
+
+1. Load list of active cases for the building (title + description + last activity)
+2. Send message + case list to Claude Haiku: "Which case does this message relate to? Return case_id or 'none' or 'ambiguous'"
+3. If ambiguous and bot is @mentioned → bot asks: "Which case? 1) Roof repair 2) Service charge 2026"
+4. If not @mentioned and ambiguous → bot does not respond (avoids noise)
 
 ---
 
@@ -488,6 +507,8 @@ Request itemized breakdown and supporting invoices before paying.
 Reply with questions or type @commonground to ask me anything.
 ```
 
+**Message splitting:** If a summary exceeds 4096 characters (WhatsApp limit), the bot splits it into multiple sequential messages. Each message is self-contained with its own header emoji. Maximum 3 messages per summary — if content is longer, truncate and add 'Full analysis available from your director.'
+
 ---
 
 ## 7. RAG (Retrieval-Augmented Generation) design
@@ -505,7 +526,7 @@ User asks: "Did they promise to fix the roof last year?"
    ORDER BY embedding <=> $query_embedding
    LIMIT 10
 3. Build context: top 10 chunks + current case claims
-4. Claude Sonnet: answer with citations
+4. Claude Haiku: answer with citations
 5. Response includes [Source: Letter from Buildium, March 2025]
 ```
 
@@ -540,6 +561,10 @@ Rules:
 
 Building context: {building_name}, {address}
 Current date: {date}
+
+Group mode context:
+- If closed mode: never post strategy, evidence analysis, contradictions, or draft text in the group
+- In closed mode, direct all sensitive content to the director's 1:1 chat
 ```
 
 ### 8.2 Key prompts
@@ -722,6 +747,38 @@ Bot (1:1): "Your photo has been added to the case.
 
 ---
 
+## 16. GDPR compliance (MVP)
+
+### Lawful basis
+Legitimate interest — the building has a legitimate interest in organizing its dispute management.
+
+### Privacy notice
+- Hosted at /privacy on the web app
+- Bot sends link on first contact with any new resident:
+  "Hi! I'm Common Ground. Before we start, here's how I handle your data: [link]"
+
+### Data minimization
+- Bot stores WhatsApp phone numbers (required for identification) and flat numbers
+- Personal names are optional (display_name field)
+- Financial document content is stored but access is scoped to the building via RLS
+
+### Right to erasure
+- Director can remove a resident via dashboard settings
+- Removal deactivates the resident record (soft delete)
+- Evidence items contributed by that resident are anonymized (submitted_by_phone set to null) but content preserved for case integrity
+
+### International data transfer
+- Supabase: EU region available (choose eu-west for GDPR)
+- Anthropic API: US-based — include in privacy notice that data is processed by AI services outside the UK
+- Vercel: EU regions available
+
+### Bot disclaimers
+- Bot identifies itself as AI in all first interactions
+- Every draft includes footer: "This draft was generated by AI. Review carefully before sending."
+- Bot never claims to provide legal or financial advice
+
+---
+
 ## 13. Deployment
 
 ```
@@ -744,7 +801,7 @@ Supabase:
 | Feature | Notes |
 |---------|-------|
 | Gmail / Outlook integration | Auto-ingest managing agent emails |
-| Facebook Messenger groups | Channel adapter already stubbed |
+| Facebook Messenger groups | Channel adapter needed |
 | Case pack export (PDF) | For solicitors / advisers |
 | Committee voting flows | Multiple approvers |
 | Complaint workflow templates | FTT / TPO / ombudsman |

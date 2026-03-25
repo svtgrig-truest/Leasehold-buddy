@@ -148,6 +148,7 @@ Solicitor, adviser, or specialist leasehold consultant brought in once the case 
 6. **Structured contradiction handling.** The bot should surface disputed facts rather than pretending certainty.
 7. **Role-based visibility.** Not every resident needs access to every flat-specific detail.
 8. **Careful, not aggressive.** The bot should sound professional, calm, and precise.
+9. **Safe by default in mixed groups.** If the managing agent has access to the building chat, the bot automatically restricts what it posts publicly. Strategy, evidence analysis, and draft responses stay in private channels.
 
 ---
 
@@ -334,6 +335,7 @@ The assistant should not:
 
 **Surface 1: Building chat (WhatsApp group)**
 Primary collaborative workspace. Bot responds to: PDF/photo attachment, or direct @mention. Residents interact naturally; bot provides summaries, evidence prompts, draft text.
+Two group modes: **Open** (no managing agent in group — full bot functionality) and **Closed** (agent present — bot posts only neutral summaries, all strategy goes to 1:1/dashboard).
 
 **Surface 2: Private resident chat (1:1 with bot via WhatsApp)**
 Individual resident Q&A; flat-specific document explanation; controlled sharing into building case.
@@ -358,7 +360,6 @@ Review screen for formal outbound messages showing what evidence each paragraph 
 
 ### Must-have
 - WhatsApp Cloud API integration (bot in building group + 1:1 support)
-- Multi-platform channel abstraction layer (WhatsApp v1 / Facebook v2)
 - PDF and image ingestion via chat forwarding
 - Plain-English summaries posted to group
 - Resident evidence intake (private by default, explicit opt-in to share)
@@ -368,7 +369,9 @@ Review screen for formal outbound messages showing what evidence each paragraph 
 - Director approval flow + copy-ready text output
 - Case timeline and open-question tracking
 - Director web dashboard (cases, library, drafts, approvals)
-- Per-building subscription via Stripe (~£20–50/month)
+- Per-building subscription via Stripe Payment Link (~£20–50/month)
+- Open/closed group mode (managing agent detection)
+- GDPR minimal compliance kit (privacy notice, bot disclaimers, data minimization)
 - Multi-tenant data isolation per building
 
 ### Nice-to-have (V2)
@@ -401,18 +404,15 @@ Review screen for formal outbound messages showing what evidence each paragraph 
 - Heavy AI jobs (PDF parsing, embedding generation, draft generation) routed to Supabase Edge Functions to avoid Vercel 30s timeout
 - Webhook → API route → queue job → Edge Function → write result → bot responds
 
-**Channel adapter layer:**
-- Abstract `Channel` interface: `receiveMessage()`, `sendMessage()`, `sendFile()`
-- `WhatsAppAdapter`: WhatsApp Cloud API via Twilio
-- `FacebookAdapter`: placeholder / V2
-
 **Bot triggers in group:**
 - PDF or image attachment detected
 - Direct @mention of bot
 
 **Multi-tenancy:** each building is a row in `buildings` table; all data (cases, evidence, documents, residents) scoped to `building_id`; row-level security via Supabase RLS
 
-**AI model:** Claude (Anthropic API) for summarization, extraction, contradiction detection, and draft generation
+**AI models:** Claude Haiku (chat, classification) + Claude Sonnet (document analysis, drafts)
+
+**Group mode:** open/closed configurable per building
 
 ---
 
@@ -473,6 +473,7 @@ V2 tiers possible: storage limits, case limits, committee voting features.
 | 4 | Which document types get strongest red-flag detection first? | Service charge demands and repair update letters (highest VoC signal) |
 | 5 | First commercial user: director, residents' association, or committee? | **Resident director** buys and onboards the building |
 | 6 | Email export vs. copy-ready text? | **Copy-ready text in chat + web dashboard** for MVP; Gmail send in V2 |
+| 7 | Managing agent in the group chat? | **Two modes**: open (full) and closed (safe). Director chooses at onboarding. |
 
 ---
 
