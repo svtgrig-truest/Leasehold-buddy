@@ -280,10 +280,10 @@ Leasehold-buddy/
 2. `python3 publisher.py pr` creates proper GitHub PR
 3. Merged PR triggers Vercel deploy, article visible on /blog
 
-## Unresolved Questions
+## Resolved Questions (2 Apr 2026)
 
-1. **Site root vs /site/**: should Next.js app be at repo root or in /site/ subdirectory? Root is simpler for Vercel, /site/ is cleaner for monorepo. Recommend: root-level Next.js, agents in /agents/.
-2. **Blog MDX vs Supabase CMS**: plan says MDX files. If later you want non-developer editors, we'd migrate to Supabase CMS. For now MDX + Publisher PRs is cleanest.
-3. **WhatsApp Business API approval**: Meta requires business verification for WhatsApp Cloud API. This takes 1-2 weeks. Start the application early.
-4. **First 3 SEO articles**: should we write them manually during site build, or wait for Publisher to generate them? Recommend: manually seed from VoC data to launch blog faster.
-5. **MSE scraping legality**: still needs robots.txt + ToS check before Scout listener goes live.
+1. **Site root vs /site/**: ✅ Next.js at repo root. Vercel zero-config, /agents/ and /data/ sit alongside.
+2. **Blog MDX vs Supabase CMS**: ✅ MDX files in repo for v1. Migrate to CMS later if needed.
+3. **WhatsApp Business API approval**: ✅ Deferred until site is ready. Will apply then.
+4. **First 3 SEO articles**: ✅ Generate manually from VoC data during blog build phase (S2). Blog launches with content.
+5. **MSE scraping legality**: ✅ Check robots.txt + ToS first. Fallback: manual monitoring if scraping is blocked.
